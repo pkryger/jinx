@@ -299,6 +299,9 @@ Predicate may return a position to skip forward.")
 (defvar-local jinx--session-words nil
   "List of words accepted in this session.")
 
+(defvar jinx--mutex (make-mutex "jinx--mutex")
+  "Mutex for thread safe access to jinx-mod dynamic module.")
+
 ;;;; Declarations for the bytecode compiler
 
 (defvar repeat-mode)
@@ -754,18 +757,23 @@ The word will be associated with GROUP and get a prefix key."
     (delete-region start end)))
 
 (defun jinx--load-dicts ()
+  "Initialize broker and dicts in a worker thread."
+  (make-thread 'jinx--load-dicts-thread "jinx--load-dicts-thread"))
+
+(defun jinx--load-dicts-thread ()
   "Load dictionaries and setup syntax table."
-  (setq jinx--dicts (delq nil (mapcar #'jinx--mod-dict
-                                      (split-string jinx-languages)))
-        jinx--syntax-table (make-syntax-table jinx--base-syntax-table))
-  (unless jinx--dicts
-    (message "Jinx: No dictionaries available for %S" jinx-languages))
-  (dolist (dict jinx--dicts)
-    (cl-loop for c across (jinx--mod-wordchars dict) do
-             (modify-syntax-entry c "w" jinx--syntax-table)))
-  (modify-syntax-entry ?' "w" jinx--syntax-table)
-  (modify-syntax-entry ?’ "w" jinx--syntax-table)
-  (modify-syntax-entry ?. "." jinx--syntax-table))
+  (with-mutex jinx--mutex
+    (setq jinx--dicts (delq nil (mapcar #'jinx--mod-dict
+                                        (split-string jinx-languages)))
+          jinx--syntax-table (make-syntax-table jinx--base-syntax-table))
+    (unless jinx--dicts
+      (message "Jinx: No dictionaries available for %S" jinx-languages))
+    (dolist (dict jinx--dicts)
+      (cl-loop for c across (jinx--mod-wordchars dict) do
+               (modify-syntax-entry c "w" jinx--syntax-table)))
+    (modify-syntax-entry ?' "w" jinx--syntax-table)
+    (modify-syntax-entry ?’ "w" jinx--syntax-table)
+    (modify-syntax-entry ?. "." jinx--syntax-table)))
 
 (defun jinx--bounds-of-word ()
   "Return bounds of word at point using `jinx--syntax-table'."
